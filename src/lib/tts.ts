@@ -1,9 +1,7 @@
 import { writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 
-// Google Translate TTS (gratuito, sem API key, funciona em serverless)
-const TTS_BASE = 'https://translate.google.com/translate_tts'
-
+// StreamElements TTS (gratuito, sem API key, funciona em serverless)
 export async function generateSpeech(text: string, filename: string): Promise<string> {
   const outputDir = join('/tmp', 'audio')
   await mkdir(outputDir, { recursive: true })
@@ -11,54 +9,23 @@ export async function generateSpeech(text: string, filename: string): Promise<st
   const safeName = filename.replace(/[^a-zA-Z0-9_-]/g, '_')
   const outputPath = join(outputDir, `${safeName}.mp3`)
 
-  // Dividir texto em chunks de ~200 chars (limite do Google TTS)
-  const chunks = splitText(text, 200)
-  const audioBuffers: Buffer[] = []
+  const params = new URLSearchParams({
+    voice: 'Camila',
+    text: text.slice(0, 500),
+  })
 
-  for (const chunk of chunks) {
-    const params = new URLSearchParams({
-      ie: 'UTF-8',
-      q: chunk,
-      tl: 'pt-BR',
-      client: 'tw-ob',
-    })
+  const res = await fetch(`https://api.streamelements.com/kappa/v2/speech?${params.toString()}`, {
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+  })
 
-    const res = await fetch(`${TTS_BASE}?${params.toString()}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      },
-    })
-
-    if (!res.ok) {
-      throw new Error(`TTS error ${res.status}`)
-    }
-
-    const buffer = Buffer.from(await res.arrayBuffer())
-    audioBuffers.push(buffer)
+  if (!res.ok) {
+    throw new Error(`TTS error ${res.status}`)
   }
 
-  const finalBuffer = Buffer.concat(audioBuffers)
-  await writeFile(outputPath, finalBuffer)
+  const buffer = Buffer.from(await res.arrayBuffer())
+  await writeFile(outputPath, buffer)
 
   return `/api/audio?file=${safeName}.mp3`
-}
-
-function splitText(text: string, maxLen: number): string[] {
-  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text]
-  const chunks: string[] = []
-  let current = ''
-
-  for (const sentence of sentences) {
-    if ((current + sentence).length > maxLen && current.length > 0) {
-      chunks.push(current.trim())
-      current = sentence
-    } else {
-      current += sentence
-    }
-  }
-  if (current.trim()) chunks.push(current.trim())
-
-  return chunks
 }
 
 // Gera roteiro automático baseado no briefing
