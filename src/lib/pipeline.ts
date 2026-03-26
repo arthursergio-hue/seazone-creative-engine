@@ -1,4 +1,5 @@
-import { generateVideo, waitForVideo } from './freepik'
+import { generateVideo, waitForVideo, lipSync, waitForLipSync } from './freepik'
+import { generateSpeech, generateScript } from './tts'
 
 export interface UploadedAsset {
   url: string
@@ -11,8 +12,10 @@ export interface VideoCreative {
   label: string
   sourceImage: string
   prompt: string
-  status: 'queued' | 'generating_video' | 'completed' | 'failed'
+  status: 'queued' | 'generating_audio' | 'generating_video' | 'lip_syncing' | 'completed' | 'failed'
   videoUrl?: string
+  audioUrl?: string
+  needsLipSync: boolean
   error?: string
 }
 
@@ -98,6 +101,7 @@ export async function runPipeline(config: PipelineConfig, baseUrl: string): Prom
       sourceImage: asset.url,
       prompt: typeConfig.prompt,
       status: 'queued',
+      needsLipSync: videoType === 'apresentadora_falando',
     })
   }
 
@@ -124,27 +128,52 @@ export async function runPipeline(config: PipelineConfig, baseUrl: string): Prom
 }
 
 async function processVideos(pipeline: PipelineStatus, baseUrl: string) {
-  // Kling permite max 3 concorrentes — processar em batches de 2 para segurança
+  // Processar vídeos em batches de 2 (limite Kling = 3 concorrentes)
   const batchSize = 2
   for (let i = 0; i < pipeline.videos.length; i += batchSize) {
     const batch = pipeline.videos.slice(i, i + batchSize)
 
     await Promise.all(batch.map(async (video) => {
       try {
-        video.status = 'generating_video'
+        // STEP 1: Se é a apresentadora, gerar áudio primeiro
+        let audioPublicUrl: string | undefined
+        if (video.needsLipSync) {
+          video.status = 'generating_audio'
+          const script = generateScript({
+            nome: pipeline.briefing,
+            roi: '16,40%',
+            rendimento: 'R$ 5.500',
+            localizacao: 'Campeche, Florianópolis',
+            valorizacao: '81%',
+          })
+          const audioPath = await generateSpeech(script, video.id)
+          audioPublicUrl = `${baseUrl}${audioPath}`
+          video.audioUrl = audioPath
+        }
 
-        // A imagem precisa ser uma URL pública para a API Freepik acessar
+        // STEP 2: Gerar vídeo a partir da imagem
+        video.status = 'generating_video'
         const imageUrl = video.sourceImage.startsWith('http')
           ? video.sourceImage
           : `${baseUrl}${video.sourceImage}`
 
         const { taskId } = await generateVideo(imageUrl, video.prompt, {
-          duration: 5,
+          duration: video.needsLipSync ? 10 : 5, // Vídeo mais longo para fala
           aspectRatio: '9:16',
         })
 
-        const videoUrl = await waitForVideo(taskId)
-        video.videoUrl = videoUrl
+        const rawVideoUrl = await waitForVideo(taskId)
+
+        // STEP 3: Se precisa de lip sync, sincronizar lábios com áudio
+        if (video.needsLipSync && audioPublicUrl) {
+          video.status = 'lip_syncing'
+          const { taskId: lsTaskId } = await lipSync(rawVideoUrl, audioPublicUrl)
+          const syncedVideoUrl = await waitForLipSync(lsTaskId)
+          video.videoUrl = syncedVideoUrl
+        } else {
+          video.videoUrl = rawVideoUrl
+        }
+
         video.status = 'completed'
       } catch (err) {
         video.status = 'failed'

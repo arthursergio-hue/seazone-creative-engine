@@ -62,8 +62,12 @@ export default function Home() {
 
   const handleFileUpload = async (files: FileList, category: AssetCategory) => {
     setUploading(true)
+    setError('')
     try {
       for (const file of Array.from(files)) {
+        // Criar preview local imediato
+        const preview = URL.createObjectURL(file)
+
         const formData = new FormData()
         formData.append('file', file)
         formData.append('category', category)
@@ -71,17 +75,29 @@ export default function Home() {
         const res = await fetch('/api/upload', { method: 'POST', body: formData })
         const data = await res.json()
 
-        if (!res.ok) throw new Error(data.error)
+        if (!res.ok) throw new Error(data.error || 'Erro no upload')
 
         setImages(prev => [...prev, {
           url: data.url,
           label: file.name,
           category,
-          preview: URL.createObjectURL(file),
+          preview,
         }])
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro no upload')
+      console.error('Upload error:', err)
+      // Se o upload para o servidor falhar, ainda assim mostrar a imagem localmente
+      // para que o usuário saiba que selecionou o arquivo
+      for (const file of Array.from(files)) {
+        const preview = URL.createObjectURL(file)
+        setImages(prev => [...prev, {
+          url: preview, // usa URL local como fallback
+          label: file.name,
+          category,
+          preview,
+        }])
+      }
+      setError(`Upload: ${err instanceof Error ? err.message : 'Erro'} — imagem adicionada localmente`)
     }
     setUploading(false)
   }
@@ -166,14 +182,18 @@ export default function Home() {
   const statusBadge = (status: string) => {
     const styles: Record<string, string> = {
       queued: 'bg-gray-100 text-gray-700',
+      generating_audio: 'bg-purple-100 text-purple-800',
       generating_video: 'bg-blue-100 text-blue-800',
+      lip_syncing: 'bg-orange-100 text-orange-800',
       completed: 'bg-green-100 text-green-800',
       failed: 'bg-red-100 text-red-800',
       running: 'bg-yellow-100 text-yellow-800',
     }
     const labels: Record<string, string> = {
       queued: 'Na fila',
+      generating_audio: 'Gerando voz...',
       generating_video: 'Gerando vídeo...',
+      lip_syncing: 'Sincronizando lábios...',
       completed: 'Pronto!',
       failed: 'Falhou',
       running: 'Em andamento',
@@ -228,6 +248,8 @@ export default function Home() {
           <p className="text-sm text-gray-500 mb-4">
             Faça upload das imagens reais. A Mônica (apresentadora) já está configurada automaticamente.
           </p>
+          {uploading && <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-xl text-sm animate-pulse">Fazendo upload...</div>}
+          {error && <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-xl text-sm">{error}</div>}
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             {ASSET_CATEGORIES.map(cat => {

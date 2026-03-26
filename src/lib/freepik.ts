@@ -140,6 +140,62 @@ export async function getVideoResult(taskId: string): Promise<{
   }
 }
 
+// ===== LIP SYNC =====
+
+export async function lipSync(videoUrl: string, audioUrl: string): Promise<{ taskId: string }> {
+  const res = await fetch(`${API_BASE}/v1/ai/lip-sync/latent-sync`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({
+      video_url: videoUrl,
+      audio_url: audioUrl,
+      guidance_scale: 1,
+    }),
+  })
+
+  if (!res.ok) {
+    const error = await res.text()
+    throw new Error(`Freepik Lip Sync API error ${res.status}: ${error}`)
+  }
+
+  const data = await res.json()
+  return { taskId: data.data.task_id }
+}
+
+export async function getLipSyncResult(taskId: string): Promise<{
+  status: string
+  videoUrl?: string
+}> {
+  const res = await fetch(`${API_BASE}/v1/ai/lip-sync/latent-sync/${taskId}`, {
+    method: 'GET',
+    headers: headers(),
+  })
+
+  if (!res.ok) {
+    const error = await res.text()
+    throw new Error(`Freepik Lip Sync Status error ${res.status}: ${error}`)
+  }
+
+  const data = await res.json()
+  const status = data.data?.status || data.status
+  const videoUrl = data.data?.generated?.[0]
+
+  return {
+    status: status === 'COMPLETED' ? 'completed' : status === 'FAILED' ? 'failed' : 'processing',
+    videoUrl,
+  }
+}
+
+export async function waitForLipSync(taskId: string, maxAttempts = 120): Promise<string> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const result = await getLipSyncResult(taskId)
+    if (result.status === 'completed' && result.videoUrl) return result.videoUrl
+    if (result.status === 'failed') throw new Error('Lip sync falhou')
+    await new Promise(r => setTimeout(r, 5000))
+  }
+  throw new Error('Timeout: lip sync não ficou pronto')
+}
+
 // ===== POLLING =====
 
 export async function waitForImage(taskId: string, model: string = 'flux-2-pro', maxAttempts = 60): Promise<string> {
