@@ -1,26 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { runPipeline, CreativeType } from '@/lib/pipeline'
+import { runPipeline, PipelineConfig } from '@/lib/pipeline'
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json()
-    const {
-      types = ['fachada', 'localizacao', 'roi', 'rendimento', 'lifestyle'],
-      briefing,
-    } = body as { types?: CreativeType[]; briefing?: string }
+    const body = await req.json() as PipelineConfig
 
-    const validTypes: CreativeType[] = ['fachada', 'localizacao', 'roi', 'rendimento', 'lifestyle', 'rooftop', 'apresentadora']
-    const filteredTypes = types.filter(t => validTypes.includes(t))
+    const protocol = req.headers.get('x-forwarded-proto') || 'http'
+    const host = req.headers.get('host') || 'localhost:3000'
+    const baseUrl = `${protocol}://${host}`
 
-    if (filteredTypes.length === 0) {
-      return NextResponse.json({ error: 'Nenhum tipo de criativo válido' }, { status: 400 })
-    }
-
-    const pipelineId = await runPipeline(filteredTypes, briefing)
+    const pipelineId = await runPipeline(body, baseUrl)
 
     return NextResponse.json({
       pipelineId,
-      message: 'Pipeline iniciada! Acompanhe o status.',
+      message: 'Pipeline iniciada! Gerando vídeos a partir das suas imagens.',
       statusUrl: `/api/status?id=${pipelineId}`,
     })
   } catch (err) {

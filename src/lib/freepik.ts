@@ -13,7 +13,35 @@ function headers() {
   }
 }
 
-// ===== GERAÇÃO DE IMAGENS (Flux 2 Pro) =====
+// ===== GERAÇÃO DE IMAGENS COM REFERÊNCIA (Flux Kontext Pro) =====
+// Usa imagem de referência para manter consistência (ex: Mônica)
+
+export async function generateImageWithReference(
+  prompt: string,
+  referenceImageUrl: string,
+  options?: { aspectRatio?: string; seed?: number }
+): Promise<{ taskId: string }> {
+  const res = await fetch(`${API_BASE}/v1/ai/text-to-image/flux-kontext-pro`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({
+      prompt,
+      image: referenceImageUrl,
+      aspect_ratio: options?.aspectRatio || '9:16',
+      ...(options?.seed && { seed: options.seed }),
+    }),
+  })
+
+  if (!res.ok) {
+    const error = await res.text()
+    throw new Error(`Freepik Kontext API error ${res.status}: ${error}`)
+  }
+
+  const data = await res.json()
+  return { taskId: data.data.task_id }
+}
+
+// ===== GERAÇÃO DE IMAGENS (Flux 2 Pro - text-to-image) =====
 
 export async function generateImage(prompt: string, options?: {
   aspectRatio?: string
@@ -24,7 +52,7 @@ export async function generateImage(prompt: string, options?: {
     headers: headers(),
     body: JSON.stringify({
       prompt,
-      aspect_ratio: options?.aspectRatio || '16:9',
+      aspect_ratio: options?.aspectRatio || '9:16',
       ...(options?.seed && { seed: options.seed }),
     }),
   })
@@ -35,15 +63,14 @@ export async function generateImage(prompt: string, options?: {
   }
 
   const data = await res.json()
-  // Formato real: { data: { task_id: "...", status: "CREATED", generated: [] } }
   return { taskId: data.data.task_id }
 }
 
-export async function getImageResult(taskId: string): Promise<{
+export async function getImageResult(taskId: string, model: string = 'flux-2-pro'): Promise<{
   status: string
   imageUrl?: string
 }> {
-  const res = await fetch(`${API_BASE}/v1/ai/text-to-image/flux-2-pro/${taskId}`, {
+  const res = await fetch(`${API_BASE}/v1/ai/text-to-image/${model}/${taskId}`, {
     method: 'GET',
     headers: headers(),
   })
@@ -54,7 +81,6 @@ export async function getImageResult(taskId: string): Promise<{
   }
 
   const data = await res.json()
-  // Formato real: { data: { task_id, status: "COMPLETED", generated: ["url1", ...] } }
   const status = data.data.status
   const imageUrl = data.data.generated?.[0]
 
@@ -64,7 +90,7 @@ export async function getImageResult(taskId: string): Promise<{
   }
 }
 
-// ===== GERAÇÃO DE VÍDEOS (Kling O1) =====
+// ===== GERAÇÃO DE VÍDEOS (Image-to-Video) =====
 
 export async function generateVideo(imageUrl: string, prompt: string, options?: {
   duration?: 5 | 10
@@ -77,7 +103,7 @@ export async function generateVideo(imageUrl: string, prompt: string, options?: 
       first_frame: imageUrl,
       prompt,
       duration: options?.duration || 5,
-      aspect_ratio: options?.aspectRatio || '16:9',
+      aspect_ratio: options?.aspectRatio || '9:16',
     }),
   })
 
@@ -106,7 +132,7 @@ export async function getVideoResult(taskId: string): Promise<{
 
   const data = await res.json()
   const status = data.data?.status || data.status
-  const videoUrl = data.data?.generated?.[0] || data.data?.video?.url || data.data?.result?.url
+  const videoUrl = data.data?.generated?.[0] || data.data?.video?.url
 
   return {
     status: status === 'COMPLETED' ? 'completed' : status === 'FAILED' ? 'failed' : 'processing',
@@ -114,11 +140,11 @@ export async function getVideoResult(taskId: string): Promise<{
   }
 }
 
-// ===== POLLING (espera resultado ficar pronto) =====
+// ===== POLLING =====
 
-export async function waitForImage(taskId: string, maxAttempts = 60): Promise<string> {
+export async function waitForImage(taskId: string, model: string = 'flux-2-pro', maxAttempts = 60): Promise<string> {
   for (let i = 0; i < maxAttempts; i++) {
-    const result = await getImageResult(taskId)
+    const result = await getImageResult(taskId, model)
     if (result.status === 'completed' && result.imageUrl) return result.imageUrl
     if (result.status === 'failed') throw new Error('Geração de imagem falhou')
     await new Promise(r => setTimeout(r, 3000))

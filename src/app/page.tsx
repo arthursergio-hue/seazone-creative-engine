@@ -2,14 +2,23 @@
 
 import { useState, useEffect, useCallback } from 'react'
 
-type CreativeType = 'fachada' | 'localizacao' | 'roi' | 'rendimento' | 'lifestyle' | 'rooftop' | 'apresentadora'
+type AssetCategory = 'fachada' | 'interior' | 'localizacao' | 'rooftop'
+type VideoType = 'apresentadora_falando' | 'fachada_cinematic' | 'interior_tour' | 'localizacao_aerial' | 'rooftop_lifestyle'
 
-interface Creative {
-  type: CreativeType
+interface UploadedImage {
+  url: string
   label: string
-  imageUrl: string
-  videoUrl?: string
+  category: AssetCategory
+  file?: File
+  preview?: string
+}
+
+interface VideoCreative {
+  id: string
+  label: string
+  sourceImage: string
   status: string
+  videoUrl?: string
   error?: string
 }
 
@@ -17,40 +26,88 @@ interface Pipeline {
   id: string
   briefing: string
   status: string
-  creatives: Creative[]
+  videos: VideoCreative[]
   startedAt: string
   completedAt?: string
 }
 
-const CREATIVE_OPTIONS: { value: CreativeType; label: string; description: string }[] = [
-  { value: 'fachada', label: 'Fachada', description: 'Fachada do empreendimento' },
-  { value: 'localizacao', label: 'Localização', description: 'Vista aérea da região' },
-  { value: 'roi', label: 'ROI', description: 'Retorno sobre investimento' },
-  { value: 'rendimento', label: 'Rendimento', description: 'Rendimento mensal' },
-  { value: 'lifestyle', label: 'Interior', description: 'Studio decorado' },
-  { value: 'rooftop', label: 'Rooftop', description: 'Piscina e terraço' },
-  { value: 'apresentadora', label: 'Apresentadora', description: 'Porta-voz Seazone' },
+const ASSET_CATEGORIES: { value: AssetCategory; label: string; description: string }[] = [
+  { value: 'fachada', label: 'Fachada', description: 'Imagem da fachada do empreendimento' },
+  { value: 'interior', label: 'Interior', description: 'Foto do apartamento/studio' },
+  { value: 'localizacao', label: 'Localização', description: 'Vista aérea ou mapa da região' },
+  { value: 'rooftop', label: 'Rooftop/Área comum', description: 'Piscina, terraço, áreas comuns' },
 ]
 
+const VIDEO_OPTIONS: { value: VideoType; label: string; requires: AssetCategory | 'apresentadora' }[] = [
+  { value: 'apresentadora_falando', label: 'Mônica apresentando o empreendimento', requires: 'apresentadora' },
+  { value: 'fachada_cinematic', label: 'Fachada — vídeo cinematográfico', requires: 'fachada' },
+  { value: 'interior_tour', label: 'Interior — tour pelo apartamento', requires: 'interior' },
+  { value: 'localizacao_aerial', label: 'Localização — vista aérea', requires: 'localizacao' },
+  { value: 'rooftop_lifestyle', label: 'Rooftop — piscina e lifestyle', requires: 'rooftop' },
+]
+
+// Mônica pré-configurada (imagem fixa da apresentadora)
+const MONICA_IMAGE = '/uploads/apresentadora/monica.png'
+
 export default function Home() {
-  const [selectedTypes, setSelectedTypes] = useState<CreativeType[]>([
-    'fachada', 'localizacao', 'roi', 'rendimento', 'lifestyle', 'rooftop', 'apresentadora',
+  const [images, setImages] = useState<UploadedImage[]>([])
+  const [briefing, setBriefing] = useState('')
+  const [selectedVideos, setSelectedVideos] = useState<VideoType[]>([
+    'apresentadora_falando', 'fachada_cinematic', 'interior_tour',
   ])
-  const [customBriefing, setCustomBriefing] = useState('')
   const [pipeline, setPipeline] = useState<Pipeline | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [history, setHistory] = useState<Pipeline[]>([])
+  const [uploading, setUploading] = useState(false)
 
-  const toggleType = (type: CreativeType) => {
-    setSelectedTypes(prev =>
+  const handleFileUpload = async (files: FileList, category: AssetCategory) => {
+    setUploading(true)
+    try {
+      for (const file of Array.from(files)) {
+        const formData = new FormData()
+        formData.append('file', file)
+        formData.append('category', category)
+
+        const res = await fetch('/api/upload', { method: 'POST', body: formData })
+        const data = await res.json()
+
+        if (!res.ok) throw new Error(data.error)
+
+        setImages(prev => [...prev, {
+          url: data.url,
+          label: file.name,
+          category,
+          preview: URL.createObjectURL(file),
+        }])
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro no upload')
+    }
+    setUploading(false)
+  }
+
+  const removeImage = (index: number) => {
+    setImages(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const toggleVideo = (type: VideoType) => {
+    setSelectedVideos(prev =>
       prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
     )
   }
 
+  const canGenerate = () => {
+    return selectedVideos.some(vt => {
+      const opt = VIDEO_OPTIONS.find(o => o.value === vt)
+      if (!opt) return false
+      if (opt.requires === 'apresentadora') return true // Mônica já está configurada
+      return images.some(img => img.category === opt.requires)
+    })
+  }
+
   const startGeneration = async () => {
-    if (selectedTypes.length === 0) {
-      setError('Selecione pelo menos um tipo de criativo')
+    if (!canGenerate()) {
+      setError('Faça upload de pelo menos uma imagem para os vídeos selecionados')
       return
     }
 
@@ -58,12 +115,19 @@ export default function Home() {
     setError('')
 
     try {
+      // Montar assets incluindo a Mônica
+      const assets = [
+        ...images.map(img => ({ url: img.url, label: img.label, category: img.category })),
+        { url: MONICA_IMAGE, label: 'Mônica — Apresentadora Seazone', category: 'apresentadora' as const },
+      ]
+
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          types: selectedTypes,
-          briefing: customBriefing || undefined,
+          briefingText: briefing || 'Novo Campeche SPOT II — ROI 16,40%, Rendimento R$ 5.500/mês, Localização premium no Campeche, Florianópolis',
+          assets,
+          videoTypes: selectedVideos,
         }),
       })
 
@@ -78,54 +142,39 @@ export default function Home() {
   }
 
   const pollStatus = useCallback(async (pipelineId: string) => {
-    const interval = setInterval(async () => {
+    const poll = async () => {
       try {
         const res = await fetch(`/api/status?id=${pipelineId}`)
         const data: Pipeline = await res.json()
         setPipeline(data)
-
-        if (data.status === 'completed' || data.status === 'failed') {
-          clearInterval(interval)
-          setLoading(false)
-          loadHistory()
-        }
+        return data.status === 'completed' || data.status === 'failed'
       } catch {
-        // Continua polling
+        return false
       }
-    }, 3000)
-
-    // Primeira chamada imediata
-    const res = await fetch(`/api/status?id=${pipelineId}`)
-    const data: Pipeline = await res.json()
-    setPipeline(data)
-  }, [])
-
-  const loadHistory = async () => {
-    try {
-      const res = await fetch('/api/status')
-      const data = await res.json()
-      setHistory(data)
-    } catch {
-      // Silencia erro
     }
-  }
 
-  useEffect(() => {
-    loadHistory()
+    await poll()
+    const interval = setInterval(async () => {
+      const done = await poll()
+      if (done) {
+        clearInterval(interval)
+        setLoading(false)
+      }
+    }, 4000)
   }, [])
 
   const statusBadge = (status: string) => {
     const styles: Record<string, string> = {
-      generating_image: 'bg-yellow-100 text-yellow-800',
+      queued: 'bg-gray-100 text-gray-700',
       generating_video: 'bg-blue-100 text-blue-800',
       completed: 'bg-green-100 text-green-800',
       failed: 'bg-red-100 text-red-800',
       running: 'bg-yellow-100 text-yellow-800',
     }
     const labels: Record<string, string> = {
-      generating_image: 'Gerando imagem...',
+      queued: 'Na fila',
       generating_video: 'Gerando vídeo...',
-      completed: 'Concluído',
+      completed: 'Pronto!',
       failed: 'Falhou',
       running: 'Em andamento',
     }
@@ -140,195 +189,209 @@ export default function Home() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
       {/* Header */}
       <header className="bg-[#00143D] text-white">
-        <div className="max-w-6xl mx-auto px-6 py-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-[#0055FF] rounded-lg flex items-center justify-center font-bold text-lg">
-              S
+        <div className="max-w-5xl mx-auto px-6 py-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <img src="/logo-seazone.png" alt="Seazone" className="h-10 brightness-0 invert" />
+              <div className="border-l border-blue-800 pl-4">
+                <h1 className="text-lg font-bold tracking-tight">Creative Engine</h1>
+                <p className="text-blue-300 text-xs">Gerador de vídeos para campanhas</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold">Seazone Creative Engine</h1>
-              <p className="text-slate-400 text-sm">Gerador autônomo de criativos para campanhas</p>
-            </div>
+            <span className="text-xs bg-[#0055FF] px-3 py-1 rounded-full">9:16 Vertical</span>
           </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-8 space-y-8">
-        {/* Painel de Geração */}
+      <main className="max-w-5xl mx-auto px-6 py-8 space-y-6">
+
+        {/* STEP 1: Briefing */}
         <section className="bg-white rounded-2xl shadow-sm border p-6">
-          <h2 className="text-xl font-semibold mb-4">Novo Criativo</h2>
-
-          {/* Briefing customizado */}
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Briefing (opcional — padrão: Novo Campeche SPOT II)
-            </label>
-            <textarea
-              value={customBriefing}
-              onChange={(e) => setCustomBriefing(e.target.value)}
-              placeholder="Descreva o empreendimento, pontos fortes, público-alvo... ou deixe vazio para usar o briefing padrão."
-              className="w-full rounded-xl border border-gray-200 p-4 text-sm min-h-[100px] focus:outline-none focus:ring-2 focus:ring-[#0055FF] focus:border-transparent"
-            />
+          <div className="flex items-center gap-2 mb-4">
+            <span className="bg-[#0055FF] text-white text-xs font-bold px-2.5 py-1 rounded-full">1</span>
+            <h2 className="text-lg font-semibold">Briefing do Empreendimento</h2>
           </div>
-
-          {/* Seleção de tipos */}
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Tipos de criativos
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-              {CREATIVE_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => toggleType(opt.value)}
-                  className={`p-3 rounded-xl border-2 text-left transition-all ${
-                    selectedTypes.includes(opt.value)
-                      ? 'border-[#0055FF] bg-blue-50 text-[#0055FF]'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="font-medium text-sm">{opt.label}</div>
-                  <div className="text-xs text-gray-500 mt-1">{opt.description}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Botão gerar */}
-          {error && (
-            <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-xl text-sm">{error}</div>
-          )}
-          <button
-            onClick={startGeneration}
-            disabled={loading}
-            className="w-full bg-[#0055FF] hover:bg-[#0048D7] disabled:bg-gray-300 text-white font-semibold py-4 rounded-xl transition-colors text-lg"
-          >
-            {loading ? 'Gerando criativos...' : 'Gerar Criativos com IA'}
-          </button>
+          <textarea
+            value={briefing}
+            onChange={(e) => setBriefing(e.target.value)}
+            placeholder="Ex: Novo Campeche SPOT II — ROI 16,40%, rendimento mensal R$ 5.500, localização premium no Campeche, Florianópolis. Público: investidores do Sudeste orientados a ROI..."
+            className="w-full rounded-xl border border-gray-200 p-4 text-sm min-h-[100px] focus:outline-none focus:ring-2 focus:ring-[#0055FF] focus:border-transparent resize-none"
+          />
         </section>
 
-        {/* Resultado atual */}
+        {/* STEP 2: Upload de imagens */}
+        <section className="bg-white rounded-2xl shadow-sm border p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="bg-[#0055FF] text-white text-xs font-bold px-2.5 py-1 rounded-full">2</span>
+            <h2 className="text-lg font-semibold">Imagens do Empreendimento</h2>
+          </div>
+          <p className="text-sm text-gray-500 mb-4">
+            Faça upload das imagens reais. A Mônica (apresentadora) já está configurada automaticamente.
+          </p>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            {ASSET_CATEGORIES.map(cat => {
+              const catImages = images.filter(img => img.category === cat.value)
+              return (
+                <div key={cat.value} className="relative">
+                  <label className={`block border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition-all hover:border-[#0055FF] hover:bg-blue-50 ${catImages.length > 0 ? 'border-green-400 bg-green-50' : 'border-gray-200'}`}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => e.target.files && handleFileUpload(e.target.files, cat.value)}
+                    />
+                    {catImages.length > 0 ? (
+                      <div>
+                        <img src={catImages[0].preview} alt="" className="w-full aspect-[9/16] object-cover rounded-lg mb-2" />
+                        <div className="text-xs text-green-700 font-medium">{catImages.length} imagem(ns)</div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="text-3xl text-gray-300 mb-2">+</div>
+                        <div className="text-sm font-medium text-gray-700">{cat.label}</div>
+                        <div className="text-xs text-gray-400 mt-1">{cat.description}</div>
+                      </>
+                    )}
+                  </label>
+                  {catImages.length > 0 && (
+                    <button
+                      onClick={() => setImages(prev => prev.filter(img => img.category !== cat.value))}
+                      className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 text-xs flex items-center justify-center hover:bg-red-600"
+                    >
+                      x
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Mônica pré-configurada */}
+          <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl">
+            <div className="w-12 h-12 bg-[#0055FF] rounded-full flex items-center justify-center text-white font-bold text-lg">M</div>
+            <div>
+              <div className="text-sm font-medium">Mônica — Apresentadora Seazone</div>
+              <div className="text-xs text-gray-500">Pré-configurada automaticamente em todos os criativos</div>
+            </div>
+            <span className="ml-auto bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full">Ativa</span>
+          </div>
+        </section>
+
+        {/* STEP 3: Tipos de vídeo */}
+        <section className="bg-white rounded-2xl shadow-sm border p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="bg-[#0055FF] text-white text-xs font-bold px-2.5 py-1 rounded-full">3</span>
+            <h2 className="text-lg font-semibold">Vídeos para Gerar</h2>
+          </div>
+          <p className="text-sm text-gray-500 mb-4">Todos os vídeos são gerados em formato 9:16 (vertical) para reels e stories.</p>
+
+          <div className="space-y-2">
+            {VIDEO_OPTIONS.map(opt => {
+              const hasAsset = opt.requires === 'apresentadora' || images.some(img => img.category === opt.requires)
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => toggleVideo(opt.value)}
+                  disabled={!hasAsset && opt.requires !== 'apresentadora'}
+                  className={`w-full p-3 rounded-xl border-2 text-left transition-all flex items-center gap-3 ${
+                    selectedVideos.includes(opt.value)
+                      ? 'border-[#0055FF] bg-blue-50'
+                      : hasAsset
+                        ? 'border-gray-200 hover:border-gray-300'
+                        : 'border-gray-100 bg-gray-50 opacity-50'
+                  }`}
+                >
+                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${
+                    selectedVideos.includes(opt.value) ? 'bg-[#0055FF] border-[#0055FF]' : 'border-gray-300'
+                  }`}>
+                    {selectedVideos.includes(opt.value) && (
+                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium">{opt.label}</div>
+                    {!hasAsset && opt.requires !== 'apresentadora' && (
+                      <div className="text-xs text-red-400">Precisa de imagem: {opt.requires}</div>
+                    )}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        {/* Botão gerar */}
+        {error && (
+          <div className="p-3 bg-red-50 text-red-700 rounded-xl text-sm">{error}</div>
+        )}
+        <button
+          onClick={startGeneration}
+          disabled={loading || uploading || !canGenerate()}
+          className="w-full bg-[#0055FF] hover:bg-[#0048D7] disabled:bg-gray-300 text-white font-semibold py-4 rounded-xl transition-colors text-lg shadow-lg shadow-blue-200"
+        >
+          {uploading ? 'Fazendo upload...' : loading ? 'Gerando vídeos...' : 'Gerar Vídeos com IA'}
+        </button>
+
+        {/* Resultado */}
         {pipeline && (
           <section className="bg-white rounded-2xl shadow-sm border p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold">Resultado</h2>
+              <h2 className="text-lg font-semibold">Resultado</h2>
               {statusBadge(pipeline.status)}
             </div>
-            <p className="text-sm text-gray-500 mb-6">
+            <p className="text-xs text-gray-400 mb-6">
               Briefing: {pipeline.briefing} | Iniciado: {new Date(pipeline.startedAt).toLocaleString('pt-BR')}
             </p>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {pipeline.creatives.map((creative, i) => (
-                <div key={i} className="border rounded-xl overflow-hidden">
-                  {/* Imagem */}
-                  <div className="aspect-video bg-gray-100 relative">
-                    {creative.imageUrl ? (
-                      <img
-                        src={creative.imageUrl}
-                        alt={creative.label}
-                        className="w-full h-full object-cover"
+            <div className="space-y-4">
+              {pipeline.videos.map((video, i) => (
+                <div key={i} className="border rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-medium text-sm">{video.label}</h3>
+                    {statusBadge(video.status)}
+                  </div>
+
+                  {video.status === 'generating_video' && (
+                    <div className="flex items-center gap-2 text-sm text-blue-600">
+                      <div className="animate-spin w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full" />
+                      Gerando vídeo... isso pode levar alguns minutos
+                    </div>
+                  )}
+
+                  {video.error && (
+                    <p className="text-xs text-red-500">{video.error}</p>
+                  )}
+
+                  {video.videoUrl && (
+                    <div className="mt-3">
+                      <video
+                        src={video.videoUrl}
+                        controls
+                        className="w-full max-w-[280px] aspect-[9/16] rounded-lg bg-black"
                       />
-                    ) : (
-                      <div className="flex items-center justify-center h-full text-gray-400">
-                        <div className="text-center">
-                          <div className="animate-pulse-glow text-3xl mb-2">...</div>
-                          <div className="text-sm">Gerando imagem</div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Info */}
-                  <div className="p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-medium text-sm">{creative.label}</h3>
-                      {statusBadge(creative.status)}
+                      <a
+                        href={video.videoUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-block mt-2 text-xs bg-[#0055FF] text-white hover:bg-[#0048D7] px-4 py-2 rounded-lg transition-colors"
+                      >
+                        Baixar vídeo
+                      </a>
                     </div>
-
-                    {creative.error && (
-                      <p className="text-xs text-red-500 mt-1">{creative.error}</p>
-                    )}
-
-                    {/* Links de download */}
-                    <div className="flex gap-2 mt-3">
-                      {creative.imageUrl && (
-                        <a
-                          href={creative.imageUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg transition-colors"
-                        >
-                          Baixar imagem
-                        </a>
-                      )}
-                      {creative.videoUrl && (
-                        <a
-                          href={creative.videoUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs bg-[#0055FF] text-white hover:bg-[#0048D7] px-3 py-1.5 rounded-lg transition-colors"
-                        >
-                          Baixar vídeo
-                        </a>
-                      )}
-                    </div>
-                  </div>
+                  )}
                 </div>
               ))}
             </div>
           </section>
         )}
-
-        {/* Briefing de referência */}
-        <section className="bg-white rounded-2xl shadow-sm border p-6">
-          <h2 className="text-xl font-semibold mb-4">Briefing Padrão: Novo Campeche SPOT II</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-blue-50 rounded-xl p-4 text-center">
-              <div className="text-2xl font-bold text-[#0055FF]">16,40%</div>
-              <div className="text-sm text-gray-600 mt-1">ROI estimado</div>
-            </div>
-            <div className="bg-green-50 rounded-xl p-4 text-center">
-              <div className="text-2xl font-bold text-green-600">R$ 5.500</div>
-              <div className="text-sm text-gray-600 mt-1">Rendimento/mês</div>
-            </div>
-            <div className="bg-purple-50 rounded-xl p-4 text-center">
-              <div className="text-2xl font-bold text-purple-600">81%</div>
-              <div className="text-sm text-gray-600 mt-1">Valorização</div>
-            </div>
-            <div className="bg-orange-50 rounded-xl p-4 text-center">
-              <div className="text-2xl font-bold text-orange-600">R$ 350k</div>
-              <div className="text-sm text-gray-600 mt-1">Ticket médio</div>
-            </div>
-          </div>
-
-          <div className="mt-4 grid md:grid-cols-2 gap-4 text-sm">
-            <div>
-              <h3 className="font-medium mb-2">Pontos fortes obrigatórios:</h3>
-              <ul className="space-y-1 text-gray-600">
-                <li>- ROI acima da Selic</li>
-                <li>- Localização premium no Campeche</li>
-                <li>- Rendimento mensal em reais</li>
-                <li>- Fachada valorizada</li>
-                <li>- Vista complementar</li>
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-medium mb-2 text-red-600">Não mencionar:</h3>
-              <ul className="space-y-1 text-gray-600">
-                <li>- Ticket baixo</li>
-                <li>- Vista para o mar nas unidades</li>
-                <li>- Pé na areia</li>
-                <li>- Exclusividade</li>
-              </ul>
-            </div>
-          </div>
-        </section>
       </main>
 
-      {/* Footer */}
-      <footer className="text-center py-6 text-sm text-gray-400">
-        Seazone Creative Engine — Powered by Claude Code + Freepik AI
+      <footer className="text-center py-6 text-xs text-gray-400">
+        Seazone Creative Engine — Powered by Claude Code + Freepik AI (Kling O1)
       </footer>
     </div>
   )
