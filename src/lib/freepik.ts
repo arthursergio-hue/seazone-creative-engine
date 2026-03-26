@@ -13,7 +13,7 @@ function headers() {
   }
 }
 
-// ===== GERAÇÃO DE IMAGENS =====
+// ===== GERAÇÃO DE IMAGENS (Flux 2 Pro) =====
 
 export async function generateImage(prompt: string, options?: {
   aspectRatio?: string
@@ -35,7 +35,8 @@ export async function generateImage(prompt: string, options?: {
   }
 
   const data = await res.json()
-  return { taskId: data.data?.task_id || data.task_id || data.data?.[0]?.id }
+  // Formato real: { data: { task_id: "...", status: "CREATED", generated: [] } }
+  return { taskId: data.data.task_id }
 }
 
 export async function getImageResult(taskId: string): Promise<{
@@ -53,13 +54,17 @@ export async function getImageResult(taskId: string): Promise<{
   }
 
   const data = await res.json()
-  const status = data.data?.status || data.status || 'processing'
-  const imageUrl = data.data?.images?.[0]?.url || data.data?.[0]?.url || data.data?.result?.url
+  // Formato real: { data: { task_id, status: "COMPLETED", generated: ["url1", ...] } }
+  const status = data.data.status
+  const imageUrl = data.data.generated?.[0]
 
-  return { status, imageUrl }
+  return {
+    status: status === 'COMPLETED' ? 'completed' : status === 'FAILED' ? 'failed' : 'processing',
+    imageUrl,
+  }
 }
 
-// ===== GERAÇÃO DE VÍDEOS =====
+// ===== GERAÇÃO DE VÍDEOS (Kling O1) =====
 
 export async function generateVideo(imageUrl: string, prompt: string, options?: {
   duration?: 5 | 10
@@ -69,7 +74,7 @@ export async function generateVideo(imageUrl: string, prompt: string, options?: 
     method: 'POST',
     headers: headers(),
     body: JSON.stringify({
-      image: imageUrl,
+      first_frame: imageUrl,
       prompt,
       duration: options?.duration || 5,
       aspect_ratio: options?.aspectRatio || '16:9',
@@ -82,7 +87,7 @@ export async function generateVideo(imageUrl: string, prompt: string, options?: 
   }
 
   const data = await res.json()
-  return { taskId: data.data?.task_id || data.task_id }
+  return { taskId: data.data.task_id }
 }
 
 export async function getVideoResult(taskId: string): Promise<{
@@ -100,10 +105,13 @@ export async function getVideoResult(taskId: string): Promise<{
   }
 
   const data = await res.json()
-  const status = data.data?.status || data.status || 'processing'
-  const videoUrl = data.data?.video?.url || data.data?.result?.url
+  const status = data.data?.status || data.status
+  const videoUrl = data.data?.generated?.[0] || data.data?.video?.url || data.data?.result?.url
 
-  return { status, videoUrl }
+  return {
+    status: status === 'COMPLETED' ? 'completed' : status === 'FAILED' ? 'failed' : 'processing',
+    videoUrl,
+  }
 }
 
 // ===== POLLING (espera resultado ficar pronto) =====
