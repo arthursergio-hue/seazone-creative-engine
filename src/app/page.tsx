@@ -13,22 +13,16 @@ interface UploadedImage {
   preview?: string
 }
 
-interface VideoCreative {
-  id: string
+interface VideoTask {
+  videoType: string
   label: string
-  sourceImage: string
+  taskId: string | null
+  audioUrl?: string
+  needsLipSync?: boolean
   status: string
   videoUrl?: string
+  lipSyncTaskId?: string
   error?: string
-}
-
-interface Pipeline {
-  id: string
-  briefing: string
-  status: string
-  videos: VideoCreative[]
-  startedAt: string
-  completedAt?: string
 }
 
 const ASSET_CATEGORIES: { value: AssetCategory; label: string; description: string }[] = [
@@ -55,7 +49,7 @@ export default function Home() {
   const [selectedVideos, setSelectedVideos] = useState<VideoType[]>([
     'apresentadora_falando', 'fachada_cinematic', 'interior_tour',
   ])
-  const [pipeline, setPipeline] = useState<Pipeline | null>(null)
+  const [tasks, setTasks] = useState<VideoTask[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [uploading, setUploading] = useState(false)
@@ -129,19 +123,19 @@ export default function Home() {
 
     setLoading(true)
     setError('')
+    setTasks([])
 
     try {
-      // Montar assets incluindo a Mônica
       const assets = [
         ...images.map(img => ({ url: img.url, label: img.label, category: img.category })),
-        { url: MONICA_IMAGE, label: 'Mônica — Apresentadora Seazone', category: 'apresentadora' as const },
+        { url: MONICA_IMAGE, label: 'Mônica', category: 'apresentadora' as const },
       ]
 
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          briefingText: briefing || 'Novo Campeche SPOT II — ROI 16,40%, Rendimento R$ 5.500/mês, Localização premium no Campeche, Florianópolis',
+          briefingText: briefing || 'Novo Campeche SPOT II',
           assets,
           videoTypes: selectedVideos,
         }),
@@ -150,33 +144,85 @@ export default function Home() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
 
-      pollStatus(data.pipelineId)
+      setTasks(data.results)
+      pollTasks(data.results)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao iniciar geração')
       setLoading(false)
     }
   }
 
-  const pollStatus = useCallback(async (pipelineId: string) => {
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/status?id=${pipelineId}`)
-        const data: Pipeline = await res.json()
-        setPipeline(data)
-        return data.status === 'completed' || data.status === 'failed'
-      } catch {
-        return false
-      }
-    }
+  const pollTasks = useCallback((initialTasks: VideoTask[]) => {
+    const tasksRef = [...initialTasks]
 
-    await poll()
     const interval = setInterval(async () => {
-      const done = await poll()
-      if (done) {
+      let allDone = true
+
+      for (const task of tasksRef) {
+        if (task.status === 'completed' || task.status === 'failed' || !task.taskId) continue
+
+        try {
+          // Checar vídeo na Freepik
+          if (task.status === 'generating_video') {
+            const res = await fetch(`/api/status?taskId=${task.taskId}&type=video`)
+            const result = await res.json()
+
+            if (result.status === 'completed' && result.videoUrl) {
+              task.videoUrl = result.videoUrl
+
+              // Se precisa de lip sync, iniciar
+              if (task.needsLipSync && task.audioUrl) {
+                task.status = 'lip_syncing'
+                const lsRes = await fetch('/api/status', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ videoUrl: result.videoUrl, audioUrl: task.audioUrl }),
+                })
+                const lsData = await lsRes.json()
+                task.lipSyncTaskId = lsData.taskId
+              } else {
+                task.status = 'completed'
+              }
+            } else if (result.status === 'failed') {
+              task.status = 'failed'
+              task.error = 'Geração de vídeo falhou'
+            } else {
+              allDone = false
+            }
+          }
+
+          // Checar lip sync
+          if (task.status === 'lip_syncing' && task.lipSyncTaskId) {
+            const res = await fetch(`/api/status?taskId=${task.lipSyncTaskId}&type=lipsync`)
+            const result = await res.json()
+
+            if (result.status === 'completed' && result.videoUrl) {
+              task.videoUrl = result.videoUrl
+              task.status = 'completed'
+            } else if (result.status === 'failed') {
+              // Lip sync falhou mas vídeo existe — usa o vídeo sem sync
+              task.status = 'completed'
+              task.error = 'Lip sync falhou, usando vídeo original'
+            } else {
+              allDone = false
+            }
+          }
+
+          if (task.status !== 'completed' && task.status !== 'failed') {
+            allDone = false
+          }
+        } catch {
+          allDone = false
+        }
+      }
+
+      setTasks([...tasksRef])
+
+      if (allDone) {
         clearInterval(interval)
         setLoading(false)
       }
-    }, 4000)
+    }, 5000)
   }, [])
 
   const statusBadge = (status: string) => {
@@ -378,44 +424,44 @@ export default function Home() {
         </button>
 
         {/* Resultado */}
-        {pipeline && (
+        {tasks.length > 0 && (
           <section className="bg-white rounded-2xl shadow-sm border p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold">Resultado</h2>
-              {statusBadge(pipeline.status)}
+              {loading && <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full">Processando...</span>}
+              {!loading && <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">Concluído</span>}
             </div>
-            <p className="text-xs text-gray-400 mb-6">
-              Briefing: {pipeline.briefing} | Iniciado: {new Date(pipeline.startedAt).toLocaleString('pt-BR')}
-            </p>
 
             <div className="space-y-4">
-              {pipeline.videos.map((video, i) => (
+              {tasks.map((task, i) => (
                 <div key={i} className="border rounded-xl p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-medium text-sm">{video.label}</h3>
-                    {statusBadge(video.status)}
+                    <h3 className="font-medium text-sm">{task.label}</h3>
+                    {statusBadge(task.status)}
                   </div>
 
-                  {video.status === 'generating_video' && (
+                  {(task.status === 'generating_video' || task.status === 'lip_syncing' || task.status === 'generating_audio') && (
                     <div className="flex items-center gap-2 text-sm text-blue-600">
                       <div className="animate-spin w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full" />
-                      Gerando vídeo... isso pode levar alguns minutos
+                      {task.status === 'generating_video' && 'Gerando vídeo... pode levar alguns minutos'}
+                      {task.status === 'lip_syncing' && 'Sincronizando lábios com áudio...'}
+                      {task.status === 'generating_audio' && 'Gerando voz...'}
                     </div>
                   )}
 
-                  {video.error && (
-                    <p className="text-xs text-red-500">{video.error}</p>
+                  {task.error && (
+                    <p className="text-xs text-orange-500 mt-1">{task.error}</p>
                   )}
 
-                  {video.videoUrl && (
+                  {task.videoUrl && (
                     <div className="mt-3">
                       <video
-                        src={video.videoUrl}
+                        src={task.videoUrl}
                         controls
                         className="w-full max-w-[280px] aspect-[9/16] rounded-lg bg-black"
                       />
                       <a
-                        href={video.videoUrl}
+                        href={task.videoUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-block mt-2 text-xs bg-[#0055FF] text-white hover:bg-[#0048D7] px-4 py-2 rounded-lg transition-colors"
