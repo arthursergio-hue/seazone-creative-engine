@@ -35,22 +35,54 @@ export interface PipelineConfig {
 export interface PipelineStatus {
   id: string
   briefing: string
+  baseUrl: string
   status: 'running' | 'completed' | 'failed'
   videos: VideoCreative[]
   startedAt: string
   completedAt?: string
 }
 
+import { writeFileSync, readFileSync, mkdirSync, readdirSync } from 'fs'
+import { join } from 'path'
+
+const PIPELINE_DIR = join('/tmp', 'pipelines')
+
+function ensureDir() {
+  try { mkdirSync(PIPELINE_DIR, { recursive: true }) } catch {}
+}
+
+function savePipeline(pipeline: PipelineStatus) {
+  ensureDir()
+  writeFileSync(join(PIPELINE_DIR, `${pipeline.id}.json`), JSON.stringify(pipeline))
+}
+
+function loadPipeline(id: string): PipelineStatus | undefined {
+  try {
+    const data = readFileSync(join(PIPELINE_DIR, `${id}.json`), 'utf-8')
+    return JSON.parse(data)
+  } catch {
+    return undefined
+  }
+}
+
+// Também manter em memória para o mesmo processo
 const pipelines = new Map<string, PipelineStatus>()
 
 export function getPipeline(id: string): PipelineStatus | undefined {
-  return pipelines.get(id)
+  return pipelines.get(id) || loadPipeline(id)
 }
 
 export function getAllPipelines(): PipelineStatus[] {
-  return Array.from(pipelines.values()).sort(
-    (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
-  )
+  ensureDir()
+  try {
+    const files = readdirSync(PIPELINE_DIR).filter(f => f.endsWith('.json'))
+    const all = files.map(f => {
+      try { return JSON.parse(readFileSync(join(PIPELINE_DIR, f), 'utf-8')) as PipelineStatus } catch { return null }
+    }).filter(Boolean) as PipelineStatus[]
+    return all.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
+  } catch {
+    return Array.from(pipelines.values())
+  }
 }
 
 const VIDEO_TYPE_CONFIG: Record<VideoType, { label: string; category: UploadedAsset['category']; prompt: string }> = {
@@ -112,22 +144,27 @@ export async function runPipeline(config: PipelineConfig, baseUrl: string): Prom
   const pipeline: PipelineStatus = {
     id,
     briefing: config.briefingText || 'Novo Campeche SPOT II',
+    baseUrl,
     status: 'running',
     videos,
     startedAt: new Date().toISOString(),
   }
 
   pipelines.set(id, pipeline)
+  savePipeline(pipeline)
 
-  processVideos(pipeline, baseUrl).catch(err => {
+  processVideos(pipeline).catch(err => {
     pipeline.status = 'failed'
+    savePipeline(pipeline)
     console.error('Pipeline failed:', err)
   })
 
   return id
 }
 
-async function processVideos(pipeline: PipelineStatus, baseUrl: string) {
+async function processVideos(pipeline: PipelineStatus) {
+  const { baseUrl } = pipeline
+
   // Processar vídeos em batches de 2 (limite Kling = 3 concorrentes)
   const batchSize = 2
   for (let i = 0; i < pipeline.videos.length; i += batchSize) {
@@ -139,6 +176,7 @@ async function processVideos(pipeline: PipelineStatus, baseUrl: string) {
         let audioPublicUrl: string | undefined
         if (video.needsLipSync) {
           video.status = 'generating_audio'
+          savePipeline(pipeline)
           const script = generateScript({
             nome: pipeline.briefing,
             roi: '16,40%',
@@ -153,12 +191,14 @@ async function processVideos(pipeline: PipelineStatus, baseUrl: string) {
 
         // STEP 2: Gerar vídeo a partir da imagem
         video.status = 'generating_video'
+        savePipeline(pipeline)
+
         const imageUrl = video.sourceImage.startsWith('http')
           ? video.sourceImage
           : `${baseUrl}${video.sourceImage}`
 
         const { taskId } = await generateVideo(imageUrl, video.prompt, {
-          duration: video.needsLipSync ? 10 : 5, // Vídeo mais longo para fala
+          duration: video.needsLipSync ? 10 : 5,
           aspectRatio: '9:16',
         })
 
@@ -167,6 +207,7 @@ async function processVideos(pipeline: PipelineStatus, baseUrl: string) {
         // STEP 3: Se precisa de lip sync, sincronizar lábios com áudio
         if (video.needsLipSync && audioPublicUrl) {
           video.status = 'lip_syncing'
+          savePipeline(pipeline)
           const { taskId: lsTaskId } = await lipSync(rawVideoUrl, audioPublicUrl)
           const syncedVideoUrl = await waitForLipSync(lsTaskId)
           video.videoUrl = syncedVideoUrl
@@ -175,13 +216,16 @@ async function processVideos(pipeline: PipelineStatus, baseUrl: string) {
         }
 
         video.status = 'completed'
+        savePipeline(pipeline)
       } catch (err) {
         video.status = 'failed'
         video.error = err instanceof Error ? err.message : 'Erro desconhecido'
+        savePipeline(pipeline)
       }
     }))
   }
 
   pipeline.status = pipeline.videos.some(v => v.status === 'completed') ? 'completed' : 'failed'
   pipeline.completedAt = new Date().toISOString()
+  savePipeline(pipeline)
 }
