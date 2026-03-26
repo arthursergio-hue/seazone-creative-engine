@@ -251,44 +251,62 @@ export default function Home() {
           {uploading && <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-xl text-sm animate-pulse">Fazendo upload...</div>}
           {error && <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-xl text-sm">{error}</div>}
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          {/* Botões de upload por categoria */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
             {ASSET_CATEGORIES.map(cat => {
-              const catImages = images.filter(img => img.category === cat.value)
+              const hasImage = images.some(img => img.category === cat.value)
               return (
-                <div key={cat.value} className="relative">
-                  <label className={`block border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition-all hover:border-[#0055FF] hover:bg-blue-50 ${catImages.length > 0 ? 'border-green-400 bg-green-50' : 'border-gray-200'}`}>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => e.target.files && handleFileUpload(e.target.files, cat.value)}
-                    />
-                    {catImages.length > 0 ? (
-                      <div>
-                        <img src={catImages[0].preview} alt="" className="w-full aspect-[9/16] object-cover rounded-lg mb-2" />
-                        <div className="text-xs text-green-700 font-medium">{catImages.length} imagem(ns)</div>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="text-3xl text-gray-300 mb-2">+</div>
-                        <div className="text-sm font-medium text-gray-700">{cat.label}</div>
-                        <div className="text-xs text-gray-400 mt-1">{cat.description}</div>
-                      </>
-                    )}
-                  </label>
-                  {catImages.length > 0 && (
-                    <button
-                      onClick={() => setImages(prev => prev.filter(img => img.category !== cat.value))}
-                      className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 text-xs flex items-center justify-center hover:bg-red-600"
-                    >
-                      x
-                    </button>
-                  )}
-                </div>
+                <label
+                  key={cat.value}
+                  className={`flex items-center gap-3 p-3 border-2 border-dashed rounded-xl cursor-pointer transition-all hover:border-[#0055FF] hover:bg-blue-50 ${hasImage ? 'border-green-400 bg-green-50' : 'border-gray-200'}`}
+                >
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => e.target.files && handleFileUpload(e.target.files, cat.value)}
+                  />
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg ${hasImage ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                    {hasImage ? '✓' : '+'}
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium">{cat.label}</div>
+                    <div className="text-xs text-gray-400">{cat.description}</div>
+                  </div>
+                </label>
               )
             })}
           </div>
+
+          {/* Lista de imagens enviadas */}
+          {images.length > 0 && (
+            <div className="mb-6">
+              <h3 className="text-sm font-medium text-gray-700 mb-3">Imagens enviadas ({images.length}):</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {images.map((img, i) => (
+                  <div key={i} className="relative group border rounded-xl overflow-hidden bg-gray-50">
+                    <img
+                      src={img.preview || img.url}
+                      alt={img.label}
+                      className="w-full aspect-[9/16] object-cover"
+                    />
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
+                      <span className="inline-block bg-[#0055FF] text-white text-[10px] px-2 py-0.5 rounded-full mb-1">
+                        {ASSET_CATEGORIES.find(c => c.value === img.category)?.label || img.category}
+                      </span>
+                      <div className="text-white text-xs truncate">{img.label}</div>
+                    </div>
+                    <button
+                      onClick={() => removeImage(i)}
+                      className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-6 h-6 text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
+                    >
+                      x
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Mônica pré-configurada */}
           <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl">
@@ -312,34 +330,35 @@ export default function Home() {
           <div className="space-y-2">
             {VIDEO_OPTIONS.map(opt => {
               const hasAsset = opt.requires === 'apresentadora' || images.some(img => img.category === opt.requires)
+              const isSelected = selectedVideos.includes(opt.value)
               return (
                 <button
                   key={opt.value}
                   onClick={() => toggleVideo(opt.value)}
-                  disabled={!hasAsset && opt.requires !== 'apresentadora'}
                   className={`w-full p-3 rounded-xl border-2 text-left transition-all flex items-center gap-3 ${
-                    selectedVideos.includes(opt.value)
+                    isSelected
                       ? 'border-[#0055FF] bg-blue-50'
-                      : hasAsset
-                        ? 'border-gray-200 hover:border-gray-300'
-                        : 'border-gray-100 bg-gray-50 opacity-50'
+                      : 'border-gray-200 hover:border-gray-300'
                   }`}
                 >
-                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${
-                    selectedVideos.includes(opt.value) ? 'bg-[#0055FF] border-[#0055FF]' : 'border-gray-300'
+                  <div className={`w-5 h-5 rounded border-2 flex-shrink-0 flex items-center justify-center ${
+                    isSelected ? 'bg-[#0055FF] border-[#0055FF]' : 'border-gray-300'
                   }`}>
-                    {selectedVideos.includes(opt.value) && (
+                    {isSelected && (
                       <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                       </svg>
                     )}
                   </div>
-                  <div>
+                  <div className="flex-1">
                     <div className="text-sm font-medium">{opt.label}</div>
-                    {!hasAsset && opt.requires !== 'apresentadora' && (
-                      <div className="text-xs text-red-400">Precisa de imagem: {opt.requires}</div>
+                    {isSelected && !hasAsset && opt.requires !== 'apresentadora' && (
+                      <div className="text-xs text-orange-500 mt-0.5">Faz upload da imagem de {opt.requires} no passo 2</div>
                     )}
                   </div>
+                  {opt.requires === 'apresentadora' && (
+                    <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Mônica</span>
+                  )}
                 </button>
               )
             })}

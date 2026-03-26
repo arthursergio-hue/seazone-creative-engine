@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 
-// Aumentar limite de upload para 20MB
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
@@ -19,14 +18,16 @@ export async function POST(req: NextRequest) {
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
 
-    const uploadDir = join(process.cwd(), 'public', 'uploads', category)
+    // Usar /tmp/ para compatibilidade com Vercel
+    const uploadDir = join('/tmp', 'uploads', category)
     await mkdir(uploadDir, { recursive: true })
 
     const filename = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`
     const filepath = join(uploadDir, filename)
     await writeFile(filepath, buffer)
 
-    const url = `/uploads/${category}/${filename}`
+    // Servir via API route
+    const url = `/api/uploads?category=${category}&file=${filename}`
 
     return NextResponse.json({ url, filename })
   } catch (err) {

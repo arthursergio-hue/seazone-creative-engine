@@ -9,18 +9,20 @@ const WSS_URL = 'wss://speech.platform.bing.com/consumer/speech/synthesize/reada
 const TRUSTED_CLIENT_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4'
 
 export async function generateSpeech(text: string, filename: string): Promise<string> {
-  const outputDir = join(process.cwd(), 'public', 'audio')
+  // Usar /tmp/ para compatibilidade com Vercel (serverless)
+  const outputDir = join('/tmp', 'audio')
   await mkdir(outputDir, { recursive: true })
 
   const safeName = filename.replace(/[^a-zA-Z0-9_-]/g, '_')
   const outputPath = join(outputDir, `${safeName}.mp3`)
-  const relativePath = `/audio/${safeName}.mp3`
 
   const audioBuffer = await synthesize(text)
   await writeFile(outputPath, audioBuffer)
 
-  return relativePath
+  // Retorna path para servir via API route
+  return `/api/audio?file=${safeName}.mp3`
 }
+
 
 async function synthesize(text: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
