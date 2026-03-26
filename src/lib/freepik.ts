@@ -102,7 +102,7 @@ export async function generateVideo(imageUrl: string, prompt: string, options?: 
     body: JSON.stringify({
       first_frame: imageUrl,
       prompt,
-      duration: options?.duration || 5,
+      duration: String(options?.duration || 5),
       aspect_ratio: options?.aspectRatio || '9:16',
     }),
   })
